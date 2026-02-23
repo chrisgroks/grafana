@@ -35,8 +35,36 @@ func TestCollectResourceKeys(t *testing.T) {
 	}, registry)
 
 	require.Len(t, keys, 2)
+	require.Equal(t, "dashboard.grafana.app", keys[0].Group)
 	require.Equal(t, "dashboards", keys[0].Resource)
+	require.Equal(t, "dashboard.grafana.app", keys[1].Group)
 	require.Equal(t, "folders", keys[1].Resource)
+}
+
+func TestCollectResourceKeys_DistinguishesSameResourceAcrossGroups(t *testing.T) {
+	registry := NewMigrationRegistry()
+	registry.Register(MigrationDefinition{
+		ID: "test",
+		Migrators: map[schema.GroupResource]MigratorFunc{
+			{Group: "dashboard.grafana.app", Resource: "dashboards"}: func(_ context.Context, _ int64, _ MigrateOptions, _ resourcepb.BulkStore_BulkProcessClient) error {
+				return nil
+			},
+			{Group: "example.grafana.app", Resource: "dashboards"}: func(_ context.Context, _ int64, _ MigrateOptions, _ resourcepb.BulkStore_BulkProcessClient) error {
+				return nil
+			},
+		},
+	})
+
+	keys := collectResourceKeys("stack-1", []schema.GroupResource{
+		{Group: "dashboard.grafana.app", Resource: "dashboards"},
+		{Group: "example.grafana.app", Resource: "dashboards"},
+	}, registry)
+
+	require.Len(t, keys, 2)
+	require.Equal(t, "dashboard.grafana.app", keys[0].Group)
+	require.Equal(t, "dashboards", keys[0].Resource)
+	require.Equal(t, "example.grafana.app", keys[1].Group)
+	require.Equal(t, "dashboards", keys[1].Resource)
 }
 
 func TestToBuildTimeMap(t *testing.T) {
@@ -54,8 +82,27 @@ func TestToBuildTimeMap(t *testing.T) {
 	}
 
 	m := toBuildTimeMap(buildTimes)
-	require.Equal(t, int64(100), m["dashboards"])
-	require.Equal(t, int64(200), m["folders"])
+	require.Equal(t, int64(100), m["dashboard.grafana.app/dashboards"])
+	require.Equal(t, int64(200), m["dashboard.grafana.app/folders"])
+}
+
+func TestToBuildTimeMap_DistinguishesSameResourceAcrossGroups(t *testing.T) {
+	buildTimes := []*resourcepb.RebuildIndexesResponse_IndexBuildTime{
+		{
+			Group:         "dashboard.grafana.app",
+			Resource:      "dashboards",
+			BuildTimeUnix: 100,
+		},
+		{
+			Group:         "example.grafana.app",
+			Resource:      "dashboards",
+			BuildTimeUnix: 200,
+		},
+	}
+
+	m := toBuildTimeMap(buildTimes)
+	require.Equal(t, int64(100), m["dashboard.grafana.app/dashboards"])
+	require.Equal(t, int64(200), m["example.grafana.app/dashboards"])
 }
 
 func TestRebuildIndexes_NilResponse(t *testing.T) {

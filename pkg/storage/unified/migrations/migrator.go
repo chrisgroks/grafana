@@ -69,14 +69,21 @@ func collectResourceKeys(namespace string, resources []schema.GroupResource, reg
 	}
 
 	sort.Slice(keys, func(i, j int) bool {
-		return keys[i].Resource < keys[j].Resource
+		if keys[i].Group == keys[j].Group {
+			return keys[i].Resource < keys[j].Resource
+		}
+		return keys[i].Group < keys[j].Group
 	})
 
 	return keys
 }
 
 func normalizedResourceID(gr schema.GroupResource) string {
-	return strings.ToLower(gr.Resource)
+	return normalizedGroupResourceID(gr.Group, gr.Resource)
+}
+
+func normalizedGroupResourceID(group, resource string) string {
+	return strings.ToLower(group + "/" + resource)
 }
 
 func collectMigratorFuncs(resources []schema.GroupResource, registry *MigrationRegistry) ([]MigratorFunc, error) {
@@ -275,7 +282,10 @@ func (m *unifiedMigration) rebuildIndexes(ctx context.Context, opts RebuildIndex
 func toBuildTimeMap(buildTimes []*resourcepb.RebuildIndexesResponse_IndexBuildTime) map[string]int64 {
 	buildTimeMap := make(map[string]int64, len(buildTimes))
 	for _, bt := range buildTimes {
-		buildTimeMap[strings.ToLower(bt.Resource)] = bt.BuildTimeUnix
+		if bt == nil {
+			continue
+		}
+		buildTimeMap[normalizedGroupResourceID(bt.Group, bt.Resource)] = bt.BuildTimeUnix
 	}
 	return buildTimeMap
 }
