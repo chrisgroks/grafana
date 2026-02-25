@@ -107,11 +107,7 @@ func collectMigratorFuncs(resources []schema.GroupResource, registry *MigrationR
 }
 
 func closeMigrationStream(stream resourcepb.BulkStore_BulkProcessClient) (*resourcepb.BulkResponse, error) {
-	response, err := stream.CloseAndRecv()
-	if err != nil {
-		return &resourcepb.BulkResponse{}, nil
-	}
-	return response, nil
+	return stream.CloseAndRecv()
 }
 
 type resourceClientStreamProvider struct {
