@@ -67,6 +67,41 @@ func TestCollectResourceKeys_DistinguishesSameResourceAcrossGroups(t *testing.T)
 	require.Equal(t, "dashboards", keys[1].Resource)
 }
 
+func TestCollectMigratorFuncs_DistinguishesSameResourceAcrossGroups(t *testing.T) {
+	registry := NewMigrationRegistry()
+
+	var called []string
+	registry.Register(MigrationDefinition{
+		ID: "test",
+		Migrators: map[schema.GroupResource]MigratorFunc{
+			{Group: "dashboard.grafana.app", Resource: "dashboards"}: func(_ context.Context, _ int64, _ MigrateOptions, _ resourcepb.BulkStore_BulkProcessClient) error {
+				called = append(called, "dashboard.grafana.app/dashboards")
+				return nil
+			},
+			{Group: "example.grafana.app", Resource: "dashboards"}: func(_ context.Context, _ int64, _ MigrateOptions, _ resourcepb.BulkStore_BulkProcessClient) error {
+				called = append(called, "example.grafana.app/dashboards")
+				return nil
+			},
+		},
+	})
+
+	migratorFuncs, err := collectMigratorFuncs([]schema.GroupResource{
+		{Group: "dashboard.grafana.app", Resource: "dashboards"},
+		{Group: "example.grafana.app", Resource: "dashboards"},
+	}, registry)
+
+	require.NoError(t, err)
+	require.Len(t, migratorFuncs, 2)
+
+	for _, fn := range migratorFuncs {
+		require.NoError(t, fn(context.Background(), 1, MigrateOptions{}, nil))
+	}
+	require.ElementsMatch(t, []string{
+		"dashboard.grafana.app/dashboards",
+		"example.grafana.app/dashboards",
+	}, called)
+}
+
 func TestToBuildTimeMap(t *testing.T) {
 	buildTimes := []*resourcepb.RebuildIndexesResponse_IndexBuildTime{
 		{
