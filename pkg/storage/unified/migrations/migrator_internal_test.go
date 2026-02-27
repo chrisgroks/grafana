@@ -135,3 +135,84 @@ func TestRebuildIndexes_NilResponse(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
+
+func TestRebuildIndexes_UsingDistributor_DistinguishesSameResourceAcrossGroups(t *testing.T) {
+	mockClient := resource.NewMockResourceClient(t)
+	migrationFinishedAt := time.Unix(200, 0)
+
+	expectedKeys := map[string]struct{}{
+		"alpha.grafana.app/widgets": {},
+		"zeta.grafana.app/widgets":  {},
+	}
+
+	mockClient.EXPECT().
+		RebuildIndexes(mock.Anything, mock.MatchedBy(func(req *resourcepb.RebuildIndexesRequest) bool {
+			if req == nil || req.Namespace != "stack-1" || len(req.Keys) != 2 {
+				return false
+			}
+
+			actualKeys := make(map[string]struct{}, len(req.Keys))
+			for _, key := range req.Keys {
+				if key == nil {
+					return false
+				}
+				actualKeys[normalizedGroupResourceID(key.Group, key.Resource)] = struct{}{}
+			}
+
+			if len(actualKeys) != len(expectedKeys) {
+				return false
+			}
+			for key := range expectedKeys {
+				if _, ok := actualKeys[key]; !ok {
+					return false
+				}
+			}
+			return true
+		})).
+		Return(&resourcepb.RebuildIndexesResponse{
+			ContactedAllInstances: true,
+			BuildTimes: []*resourcepb.RebuildIndexesResponse_IndexBuildTime{
+				{
+					Group:         "alpha.grafana.app",
+					Resource:      "widgets",
+					BuildTimeUnix: migrationFinishedAt.Add(-1 * time.Second).Unix(),
+				},
+				{
+					Group:         "zeta.grafana.app",
+					Resource:      "widgets",
+					BuildTimeUnix: migrationFinishedAt.Unix(),
+				},
+			},
+		}, nil).
+		Once()
+
+	registry := NewMigrationRegistry()
+	registry.Register(MigrationDefinition{
+		ID: "test",
+		Migrators: map[schema.GroupResource]MigratorFunc{
+			{Group: "alpha.grafana.app", Resource: "widgets"}: func(_ context.Context, _ int64, _ MigrateOptions, _ resourcepb.BulkStore_BulkProcessClient) error {
+				return nil
+			},
+			{Group: "zeta.grafana.app", Resource: "widgets"}: func(_ context.Context, _ int64, _ MigrateOptions, _ resourcepb.BulkStore_BulkProcessClient) error {
+				return nil
+			},
+		},
+	})
+
+	migrator := newUnifiedMigrator(nil, mockClient, log.New("test"), registry)
+	err := migrator.(*unifiedMigration).rebuildIndexes(context.Background(), RebuildIndexOptions{
+		UsingDistributor: true,
+		NamespaceInfo: authlib.NamespaceInfo{
+			OrgID: 1,
+			Value: "stack-1",
+		},
+		Resources: []schema.GroupResource{
+			{Group: "alpha.grafana.app", Resource: "widgets"},
+			{Group: "zeta.grafana.app", Resource: "widgets"},
+		},
+		MigrationFinishedAt: migrationFinishedAt,
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "alpha.grafana.app/widgets")
+}
